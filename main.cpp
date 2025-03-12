@@ -4,16 +4,17 @@
 #include <fstream>
 #include <chrono>
 #include <vector>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
 // Function to log file moves for undo
-void logMove(const std::string &oldPath, const std::string &newPath)
+void logMove(const fs::path &oldPath, const fs::path &newPath)
 {
   std::ofstream logFile("undo.log", std::ios::app);
   if (logFile)
   {
-    logFile << oldPath << " -> " << newPath << std::endl;
+    logFile << oldPath.string() << "\t" << newPath.string() << std::endl; // Using tab as delimiter
   }
 }
 
@@ -21,7 +22,7 @@ void logMove(const std::string &oldPath, const std::string &newPath)
 void organizeFiles(const std::string &directory)
 {
   std::map<std::string, std::string> fileCategories = {
-      {".jpg", "Images"}, {".png", "Images"}, {".mp4", "Videos"}, {".pdf", "Documents"}, {".docx", "Documents"}, {".cpp", "Code"}, {".mp3", "Music"}, {".txt", "Text Files"}};
+      {".avif", "Images"}, {".jpg", "Images"}, {".png", "Images"}, {".mp4", "Videos"}, {".pdf", "Documents"}, {".docx", "Documents"}, {".xlsx", "Documents"}, {".cpp", "Code"}, {".mp3", "Music"}, {".txt", "Text Files"}};
 
   for (const auto &entry : fs::directory_iterator(directory))
   {
@@ -30,11 +31,11 @@ void organizeFiles(const std::string &directory)
       std::string ext = entry.path().extension().string();
       if (fileCategories.find(ext) != fileCategories.end())
       {
-        std::string newFolder = directory + "/" + fileCategories[ext];
+        fs::path newFolder = fs::path(directory) / fileCategories[ext];
         fs::create_directories(newFolder);
 
-        std::string newPath = newFolder + "/" + entry.path().filename().string();
-        logMove(entry.path().string(), newPath);
+        fs::path newPath = newFolder / entry.path().filename();
+        logMove(entry.path(), newPath);
 
         fs::rename(entry.path(), newPath);
       }
@@ -70,11 +71,11 @@ void sortByDate(const std::string &directory)
       auto modTime = fs::last_write_time(entry);
       std::string category = getTimeCategory(modTime);
 
-      std::string newFolder = directory + "/" + category;
+      fs::path newFolder = fs::path(directory) / category;
       fs::create_directories(newFolder);
 
-      std::string newPath = newFolder + "/" + entry.path().filename().string();
-      logMove(entry.path().string(), newPath);
+      fs::path newPath = newFolder / entry.path().filename();
+      logMove(entry.path(), newPath);
 
       fs::rename(entry.path(), newPath);
     }
@@ -91,12 +92,12 @@ void undoLastOperation()
     return;
   }
 
-  std::vector<std::pair<std::string, std::string>> moves;
-  std::string oldPath, arrow, newPath;
+  std::vector<std::pair<fs::path, fs::path>> moves;
+  std::string oldPathStr, newPathStr;
 
-  while (logFile >> oldPath >> arrow >> newPath)
+  while (std::getline(logFile, oldPathStr, '\t') && std::getline(logFile, newPathStr))
   {
-    moves.push_back({oldPath, newPath});
+    moves.push_back({oldPathStr, newPathStr});
   }
   logFile.close();
 
@@ -106,18 +107,44 @@ void undoLastOperation()
     return;
   }
 
+  bool success = true;
+
   // Move files back to original locations
   for (auto it = moves.rbegin(); it != moves.rend(); ++it)
   {
-    if (fs::exists(it->second))
+    const fs::path &oldPath = it->first;
+    const fs::path &newPath = it->second;
+
+    if (fs::exists(newPath))
     {
-      fs::rename(it->second, it->first);
+      try
+      {
+        fs::rename(newPath, oldPath);
+      }
+      catch (const fs::filesystem_error &e)
+      {
+        std::cerr << "Failed to restore: " << newPath << " -> " << oldPath
+                  << "\nError: " << e.what() << std::endl;
+        success = false;
+      }
+    }
+    else
+    {
+      std::cerr << "File missing: " << newPath << " (Undo failed for this file)" << std::endl;
+      success = false;
     }
   }
 
-  // Clear the log file after undo
-  std::ofstream clearLog("undo.log", std::ios::trunc);
-  std::cout << "Undo completed. Files have been restored to original locations." << std::endl;
+  // Clear the log file only if all undo operations were successful
+  if (success)
+  {
+    std::ofstream clearLog("undo.log", std::ios::trunc);
+    std::cout << "Undo completed successfully. Files restored." << std::endl;
+  }
+  else
+  {
+    std::cerr << "Undo completed with errors. Log file not cleared." << std::endl;
+  }
 }
 
 int main()
