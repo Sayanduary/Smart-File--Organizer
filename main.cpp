@@ -1,10 +1,23 @@
 #include <iostream>
 #include <filesystem>
 #include <map>
+#include <fstream>
 #include <chrono>
+#include <vector>
 
 namespace fs = std::filesystem;
 
+// Function to log file moves for undo
+void logMove(const std::string &oldPath, const std::string &newPath)
+{
+  std::ofstream logFile("undo.log", std::ios::app);
+  if (logFile)
+  {
+    logFile << oldPath << " -> " << newPath << std::endl;
+  }
+}
+
+// Function to organize files by type
 void organizeFiles(const std::string &directory)
 {
   std::map<std::string, std::string> fileCategories = {
@@ -19,13 +32,17 @@ void organizeFiles(const std::string &directory)
       {
         std::string newFolder = directory + "/" + fileCategories[ext];
         fs::create_directories(newFolder);
-        fs::rename(entry.path(), newFolder + "/" + entry.path().filename().string());
+
+        std::string newPath = newFolder + "/" + entry.path().filename().string();
+        logMove(entry.path().string(), newPath);
+
+        fs::rename(entry.path(), newPath);
       }
     }
   }
 }
-#include <chrono>
 
+// Function to get file modification category
 std::string getTimeCategory(fs::file_time_type ftime)
 {
   auto now = std::chrono::system_clock::now();
@@ -43,6 +60,7 @@ std::string getTimeCategory(fs::file_time_type ftime)
     return "Older";
 }
 
+// Function to sort files by modification date
 void sortByDate(const std::string &directory)
 {
   for (const auto &entry : fs::directory_iterator(directory))
@@ -54,28 +72,77 @@ void sortByDate(const std::string &directory)
 
       std::string newFolder = directory + "/" + category;
       fs::create_directories(newFolder);
-      fs::rename(entry.path(), newFolder + "/" + entry.path().filename().string());
+
+      std::string newPath = newFolder + "/" + entry.path().filename().string();
+      logMove(entry.path().string(), newPath);
+
+      fs::rename(entry.path(), newPath);
     }
   }
+}
+
+// Function to undo the last operation
+void undoLastOperation()
+{
+  std::ifstream logFile("undo.log");
+  if (!logFile)
+  {
+    std::cout << "No undo history found!" << std::endl;
+    return;
+  }
+
+  std::vector<std::pair<std::string, std::string>> moves;
+  std::string oldPath, arrow, newPath;
+
+  while (logFile >> oldPath >> arrow >> newPath)
+  {
+    moves.push_back({oldPath, newPath});
+  }
+  logFile.close();
+
+  if (moves.empty())
+  {
+    std::cout << "Nothing to undo!" << std::endl;
+    return;
+  }
+
+  // Move files back to original locations
+  for (auto it = moves.rbegin(); it != moves.rend(); ++it)
+  {
+    if (fs::exists(it->second))
+    {
+      fs::rename(it->second, it->first);
+    }
+  }
+
+  // Clear the log file after undo
+  std::ofstream clearLog("undo.log", std::ios::trunc);
+  std::cout << "Undo completed. Files have been restored to original locations." << std::endl;
 }
 
 int main()
 {
   std::string path;
   int choice;
-  std::cout << "Enter the folder path to organize:  ";
+
+  std::cout << "Enter the folder path to organize: ";
   std::cin >> path;
-  organizeFiles(path);
-  std::cout << "Choose an option:\n1. Organize by File Type\n2. Organize by Date\n";
+
+  std::cout << "Choose an option:\n";
+  std::cout << "1. Organize by File Type\n";
+  std::cout << "2. Organize by Date\n";
+  std::cout << "3. Undo Last Operation\n";
   std::cin >> choice;
 
   if (choice == 1)
     organizeFiles(path);
   else if (choice == 2)
     sortByDate(path);
+  else if (choice == 3)
+    undoLastOperation();
   else
-    std::cout << "Invalid choice!";
+    std::cout << "Invalid choice!" << std::endl;
 
-  std::cout << "File organization completed!" << std::endl;
+  std::cout << "Operation completed!" << std::endl;
   return 0;
 }
